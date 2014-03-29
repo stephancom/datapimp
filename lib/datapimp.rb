@@ -9,15 +9,22 @@ end
 
 
 require 'datapimp/version'
+require 'datapimp/configuration'
 
 module Datapimp
   extend ActiveSupport::Concern
   extend ActiveSupport::Autoload
 
+  def self.config
+    Configuration
+  end
+
   autoload :Filterable
   autoload :Mutatable
+  autoload :Command
+  autoload :CommandRunner
   autoload :Smoke
-  autoload :Configuration
+  autoload :QueryRunner
 
   if defined?(::Rails)
     require "datapimp/engine"
@@ -34,9 +41,6 @@ module Datapimp
     include Mutatable
   end
 
-  def self.config
-    Configuration
-  end
 end
 
 Datapimp.eager_load!

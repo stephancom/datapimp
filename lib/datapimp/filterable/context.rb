@@ -1,10 +1,26 @@
 require 'set'
-require "datapimp/filterable/results_wrapper"
 
 module Datapimp
   module Filterable
     class Context
-      attr_accessor :all, :scope, :user, :params, :results
+
+      include ActiveSupport::DescendantsTracker
+
+      def self.all
+        descendants
+      end
+
+      def self.cached_contexts
+        descendants.select {|klass| klass.cached? }
+      end
+
+      def self.caching_report
+        cached_contexts.inject({}) do |memo,klass|
+          memo[klass.name] = klass.cached? && klass.cache_stats_report
+          memo
+        end
+      end
+
 
       # By default, the Filterable::Context is
       # anonymous.  Which means the output of the query
@@ -44,26 +60,38 @@ module Datapimp
         filters << keys.map(&:to_sym)
       end
 
+      attr_accessor :scope, :user, :params, :results, :controller, :root
+
       # The whole point of the Filter Context class, though, is to
       # provide you with a place to declare your logic for querying
       # API resources.  The FilterContext gives you access to who is
       # querying what, using what parameters, so you can customize how
       # you see fit.
-      def initialize(scope, user, params)
-        @all      = scope.dup
+      def initialize(scope, user, params, &block)
         @scope    = scope
         @params   = params.dup
         @user     = user
 
+        instance_eval(block) if block_given?
+
         build
       end
 
-      def execute
-        @results || wrap_results
+      def root
+        @root || false
+      end
+
+      def paginated?
+        false
+      end
+
+      def execute controller=nil
+        @controller = controller
+        cached? ? execute_with_caching : execute_without_caching
       end
 
       def find id
-        self.scope.find(params[:id])
+        self.scope.find(id)
       end
 
       def reset
@@ -72,19 +100,63 @@ module Datapimp
         self
       end
 
-      def clone
-        self.class.new(all, user, params)
-      end
-
-      class_attribute :results_wrapper
-
-      def wrap_results
-        wrapper = self.class.results_wrapper || ResultsWrapper
-        @results = wrapper.new(self, last_modified)
-      end
-
       def last_modified
         @last_modified ||= self.scope.maximum(:updated_at)
+      end
+
+      def build
+        build_scope
+      end
+
+      def find_single?
+        params.has_key?(:id)
+      end
+
+      def user_id
+        user.try(:id)
+      end
+
+      def anonymous?
+        self.class.anonymous? || user_id.nil?
+      end
+
+      def include_user_id_in_cache_key?
+        !anonymous?
+      end
+
+      def build_scope
+        @scope ||= self.scope
+      end
+
+      # TODO
+      # The default implementation of build scope
+      # could do a basic equality check for all of the parameters
+      # whose keys match column names on the underlying activerecord
+      def build_scope_from_columns
+        self.scope
+      end
+
+      class_attribute :_cached
+
+      def self.cached
+        include Datapimp::Filterable::CacheStatistics
+        self._cached = true
+      end
+
+      def self.enable_caching
+        cached
+      end
+
+      def self.disable_caching
+        self._cached = false
+      end
+
+      def self.cached?
+        !!(_cached)
+      end
+
+      def cached?
+        self.class.cached?
       end
 
       def etag
@@ -114,30 +186,47 @@ module Datapimp
         parts.join('/')
       end
 
-      def build
-        build_scope
+      def wrap object, last_modified=nil
+        ResultsWrapper.wrap(object, last_modified)
       end
 
-      def user_id
-        user.try(:id)
+      def serialize_results
+        ActiveModel::Serializer.build_json(controller, scope, root: root, scope: user )
       end
 
-      def anonymous?
-        self.class.anonymous? || user_id.nil?
+      def controller
+        @controller || OpenStruct.new(default_serializer_options:{}, url_options: {}, scope: user, _serializer_scope: :current_user)
       end
 
-      def include_user_id_in_cache_key?
-        !anonymous?
+      def execute_with_caching
+        result = Rails.cache.read(cache_key)
+
+        if result
+          record_cache_hit(cache_key)
+          return wrap(result)
+        end
+
+        @results = wrap_results
+
+        Rails.cache.write(cache_key, @results.dump)
+
+        record_cache_miss(cache_key)
+
+        @results
       end
 
-      def build_scope
-        @scope ||= self.scope
+      def execute_without_caching
+        @results || wrap_results
       end
 
-      def build_scope_from_columns
-        self.scope
+      def wrap_results
+        wrap(self, last_modified)
       end
 
     end
   end
+end
+
+unless defined?(ApplicationFilterContext)
+  ApplicationFilterContext = Class.new(Datapimp::Filterable::Context)
 end

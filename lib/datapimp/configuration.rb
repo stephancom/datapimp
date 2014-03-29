@@ -4,13 +4,25 @@ module Datapimp
   class Configuration
     include Singleton
 
+    Datapimp.define_singleton_method(:profile) do
+      Datapimp.config.profile
+    end
+
     cattr_accessor :root,
                    :config_path,
-                   :current_profile
+                   :current_profile,
+                   :redis_connections,
+                   :default_redis_connection
 
-    @@root            = nil
-    @@config_path     = nil
-    @@current_profile = :default
+    @@root                      = nil
+    @@config_path               = nil
+    @@current_profile           = :default
+    @@default_redis_connection  = $redis.presence
+    @@redis_connections         = {}
+
+    def self.default_redis_connection
+      @@default_redis_connection || Redis.new
+    end
 
     def self.profile
       Hashie::Mash.new(profiles[current_profile])
@@ -43,6 +55,16 @@ module Datapimp
 
     def self.root=(path)
       @@root = Pathname.new(path.to_s) if path.present?
+    end
+
+    def self.redis_connection key, object=nil
+      if object.present?
+        redis_connections[key] = object
+      end
+
+      redis_connections.fetch(key) do
+        default_redis_connection
+      end
     end
 
   end
