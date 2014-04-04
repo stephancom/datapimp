@@ -1,3 +1,3 @@
 Project.blueprint do
-  name
+  name { Faker::Name.name }
 end

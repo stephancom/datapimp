@@ -1,3 +1,3 @@
 User.blueprint do
-  email
+  email { Faker::Internet.email }
 end
