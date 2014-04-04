@@ -38,7 +38,7 @@ module Datapimp::Documentation::SerializerDocumenter
 
     def format_documentation
       # TODO
-      # Make the return valu a little nicer
+      # Make the return value a little nicer
       raw = _documentation
 
       raw.keys.each do |attribute|
